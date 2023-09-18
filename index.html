@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload CSV</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+</head>
+<body>
+    <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="csvfile" accept=".csv">
+        <input type="submit" value="Upload">
+    </form>
+    <label for="dropdown1">Latitude:</label>
+    <select id="dropdown1" disabled>Lat_col</select>
+
+    <label for="dropdown2">Longitude:</label>
+    <select id="dropdown2" disabled>Long_col</select>
+
+    <label for="dropdown3">Data to plot:</label>
+    <select id="dropdown3" disabled>Vis_col</select>
+
+    <button id="plotButton" disabled>Plot</button>
+
+    <button id="toggleView">Toggle View (Satellite/Graphical)</button>
+    <button id="toggleBaseMap">Hide Base Map</button>
+
+    <div id="map" style="width: 100%; height: 100vh;"></div>
+
+    <label for="numLevels">Select number of levels:</label>
+    <select id="numLevels">
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10">10</option>
+    </select>
+    <button id="generateLevels">Generate Levels</button>
+    <button id="applyColors">Apply</button>
+
+    <div id="levelInputs"></div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        let csvDataRows = [];
+        let map;
+        let markers = [];
+        let satelliteLayer, graphicalLayer, currentBaseLayer;
+        // Initialize the map
+        function initializeMap() {
+            map = L.map('map').setView([0, 0], 2);
+            satelliteLayer = L.tileLayer('https://api.mapbox.com/styles/v1/mapbox/satellite-streets-v11/tiles/{z}/{x}/{y}?access_token=pk.eyJ1IjoiaGVtYW50aC1rczk3IiwiYSI6ImNsbWh4b3RrZTI5dzAzZ3A4MDhhZ3M2ZDIifQ.azKXlRZ_XsQAEC0bn0ii0g', {
+                attribution: 'Map data © Mapbox',
+                zoomDelta: 0.1,
+                maxZoom: 19
+            }).addTo(map);
+            graphicalLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: 'Map data © OpenStreetMap contributors',
+                zoomDelta: 0.1,
+                maxZoom: 19
+            });
+
+            currentBaseLayer = satelliteLayer.addTo(map); // Satellite view by default
+        }
+
+        function clearMarkers() {
+        // Remove each marker from the map
+        markers.forEach(marker => map.removeLayer(marker));
+
+        // Clear the markers array
+        markers = [];
+        }
+
+        document.getElementById('toggleView').addEventListener('click', function() {
+            if (map.hasLayer(satelliteLayer)) {
+                map.removeLayer(satelliteLayer);
+                currentBaseLayer = graphicalLayer.addTo(map);
+            } else {
+                map.removeLayer(graphicalLayer);
+                currentBaseLayer = satelliteLayer.addTo(map);
+            }
+        });
+
+        document.getElementById('toggleBaseMap').addEventListener('click', function() {
+            if (map.hasLayer(currentBaseLayer)) {
+                map.removeLayer(currentBaseLayer);
+                this.textContent = "Show Base Map";
+            } else {
+                currentBaseLayer.addTo(map);
+                this.textContent = "Hide Base Map";
+            }
+        });
+
+        function determineColor(value) {    
+            const numLevels = parseInt(document.getElementById('numLevels').value);
+            
+            // If no levels have been generated, return default color            
+            if (!document.getElementById(`level1Value`)) {
+                return 'gray';
+            }
+            
+            // If the value is less than or equal to the first level
+            const firstThreshold = parseFloat(document.getElementById(`level1Value`).value);
+            if (value <= firstThreshold) {
+                return document.getElementById(`level1Color`).value;
+            }
+
+            // If the value is greater than or equal to the last level
+            const lastThreshold = parseFloat(document.getElementById(`level${numLevels}Value`).value);
+            if (value >= lastThreshold) {
+                return document.getElementById(`level${numLevels}Color`).value;
+            }
+
+            // For intermediate levels
+            for (let i = 1; i < numLevels; i++) {  // Note the change to loop until numLevels - 1
+                const currentThreshold = parseFloat(document.getElementById(`level${i}Value`).value);
+                const nextThreshold = parseFloat(document.getElementById(`level${i + 1}Value`).value);
+                if (value > currentThreshold && value <= nextThreshold) {
+                    return document.getElementById(`level${i + 1}Color`).value;
+                }
+            }
+
+            // Default color (though this case shouldn't be reached given the conditions above)
+            return 'gray';
+        }
+
+        // Logic to plot points on the map
+        function plotPoints(rows) {
+            const latColumn = document.getElementById('dropdown1').value;
+            const lonColumn = document.getElementById('dropdown2').value;
+            const dataColumn = document.getElementById('dropdown3').value;
+
+            // Clear existing markers
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+
+            const bounds = [];  // To store lat-long coordinates for fitBounds
+
+            rows.forEach(row => {
+                const lat = parseFloat(row[latColumn]);
+                const lon = parseFloat(row[lonColumn]);
+                const data = row[dataColumn];
+
+                if (!isNaN(lat) && !isNaN(lon) && !isNaN(data)) {
+                    const color = determineColor(data);
+                    const marker = L.circleMarker([lat, lon], {
+                        color: color,
+                        fillColor: color,
+                        fillOpacity: 0.5,
+                        radius: 5
+                    }).addTo(map)
+                    .bindPopup(`${dataColumn}: ${data}`);
+                    markers.push(marker);
+                    bounds.push([lat, lon]);
+                }
+            });
+
+            // Adjust map view to fit all the plotted points
+            if (bounds.length) {
+                map.fitBounds(bounds);
+            }
+        }
+
+        document.getElementById('generateLevels').addEventListener('click', function() {
+            const numLevels = parseInt(document.getElementById('numLevels').value);
+            const levelInputsDiv = document.getElementById('levelInputs');
+            
+            // Clear existing inputs
+            levelInputsDiv.innerHTML = '';
+
+            for (let i = 1; i <= numLevels; i++) {
+                const label = document.createElement('label');
+                label.textContent = `Level ${i}:`;
+
+                const colorInput = document.createElement('input');
+                colorInput.type = 'color';
+                colorInput.id = `level${i}Color`;
+
+                const valueInput = document.createElement('input');
+                valueInput.type = 'number';
+                valueInput.id = `level${i}Value`;
+                
+                levelInputsDiv.appendChild(label);
+                levelInputsDiv.appendChild(colorInput);
+                levelInputsDiv.appendChild(valueInput);
+                levelInputsDiv.appendChild(document.createElement('br'));
+            }
+        });
+
+        document.getElementById('uploadForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            clearMarkers();
+            const formData = new FormData(this);
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Data contains both columns and rows
+                const columns = data.columns;
+                csvDataRows = data.rows; // Store rows for later use
+
+                // Populate the dropdowns with the column names
+                columns.forEach(column => {
+                    ['dropdown1', 'dropdown2', 'dropdown3'].forEach(dropdownId => {
+                        const option = document.createElement('option');
+                        option.value = column;
+                        option.innerText = column;
+                        document.getElementById(dropdownId).appendChild(option);
+                    });
+                });
+
+                // Enable the dropdowns and the "Plot" button
+                ['dropdown1', 'dropdown2', 'dropdown3', 'plotButton'].forEach(elementId => {
+                    document.getElementById(elementId).disabled = false;
+                });
+
+                // Initialize the map after processing the CSV
+                initializeMap();
+            });
+        });
+        // Event listener for the "Plot" button
+        document.getElementById('plotButton').addEventListener('click', function() {
+            // Check if the "Generate Levels" button has been clicked
+            const levelInputsDiv = document.getElementById('levelInputs');
+            const hasGeneratedLevels = levelInputsDiv.hasChildNodes();
+
+            let isRangeSet = false;
+
+            if (hasGeneratedLevels) {
+                const numLevels = parseInt(document.getElementById('numLevels').value);
+                for (let i = 1; i <= numLevels; i++) {
+                    if (document.getElementById(`level${i}Value`).value) {
+                        isRangeSet = true;
+                        break;
+                    }
+                }
+            }
+
+            // If no range has been set or "Generate Levels" hasn't been clicked, use a default color
+            if (!isRangeSet) {
+                markers.forEach(marker => {
+                    marker.setStyle({ fillColor: 'gray', color: 'gray' });
+                });
+                plotPoints(csvDataRows);  // Make sure to plot points even with default color
+            } else {
+                plotPoints(csvDataRows);
+            }
+        });
+
+        document.getElementById('applyColors').addEventListener('click', function() {
+            plotPoints(csvDataRows);
+        });
+    </script>
+</body>
+</html>
