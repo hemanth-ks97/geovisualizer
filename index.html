@@ -20,8 +20,6 @@
     <label for="dropdown3">Data to plot:</label>
     <select id="dropdown3" disabled>Vis_col</select>
 
-    <button id="plotButton" disabled>Plot</button>
-
     <button id="toggleView">Toggle View (Satellite/Graphical)</button>
     <button id="toggleBaseMap">Hide Base Map</button>
 
@@ -39,16 +37,24 @@
         <option value="9">9</option>
         <option value="10">10</option>
     </select>
-    <button id="generateLevels">Generate Levels</button>
-    <button id="applyColors">Apply</button>
+    <button id="applyColors">Plot</button>
+    <button id="saveTemplate">Save Template</button>
+    <button id="loadTemplate">Load Template</button>
+    <input type="file" id="templateFile" accept=".json" style="display: none;">
 
     <div id="levelInputs"></div>
+    <div>
+        <input type="checkbox" id="reverseColorsCheckbox">
+        <label for="reverseColorsCheckbox">Reverse Colors</label>
+    </div>
+    
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
     <script>
         let csvDataRows = [];
         let map;
         let markers = [];
+        let selectedColumn;
         let satelliteLayer, graphicalLayer, currentBaseLayer;
         // Initialize the map
         function initializeMap() {
@@ -64,7 +70,7 @@
                 maxZoom: 19
             });
 
-            currentBaseLayer = satelliteLayer.addTo(map); // Satellite view by default
+            currentBaseLayer = graphicalLayer.addTo(map); // Satellite view by default
         }
 
         function clearMarkers() {
@@ -128,6 +134,68 @@
             return 'gray';
         }
 
+        function generateAutomaticLevels(rows, numLevels = 5) {
+            const values = rows.map(row => parseFloat(row[selectedColumn])).filter(value => !isNaN(value));
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const range = max - min;
+            const step = range / numLevels;  // Dividing the range into 5 parts
+
+            function computeGradientColor(level) {
+                let red, green;
+
+                // Halfway point in the number of levels
+                const midpoint = Math.ceil(numLevels / 2);
+
+                if (level <= midpoint) { // Red to Yellow
+                    red = 255;
+                    green = Math.round((255/midpoint) * level);
+                } else { // Yellow to Green
+                    green = 255;
+                    red = 255 - Math.round(255 * (level - midpoint) / midpoint);
+                }
+
+                return `#${red.toString(16).padStart(2, '0')}${green.toString(16).padStart(2, '0')}00`;
+            }
+            
+            document.getElementById('numLevels').value = numLevels; // Set the dropdown to 5
+
+            const levelInputsDiv = document.getElementById('levelInputs');
+            levelInputsDiv.innerHTML = '';  // Clear existing inputs
+
+            for (let i = 0; i < numLevels; i++) {
+                const label = document.createElement('label');
+                label.textContent = `Level ${i + 1}:`;
+
+                const colorInput = document.createElement('input');
+                colorInput.type = 'color';
+                colorInput.id = `level${i + 1}Color`;
+                colorInput.value = computeGradientColor(i);
+
+                const valueInput = document.createElement('input');
+                valueInput.type = 'number';
+                valueInput.id = `level${i + 1}Value`;
+                valueInput.value = min + (step * (i + 1));  // Set the threshold value
+
+                levelInputsDiv.appendChild(label);
+                levelInputsDiv.appendChild(colorInput);
+                levelInputsDiv.appendChild(valueInput);
+                if (i === 0) {
+                    const lowerBoundLabel = document.createElement('span');
+                    lowerBoundLabel.textContent = " (<= this value)";
+                    levelInputsDiv.appendChild(lowerBoundLabel);
+                }
+
+                if (i === numLevels - 1) {
+                    const upperBoundLabel = document.createElement('span');
+                    upperBoundLabel.textContent = " (>= this value)";
+                    levelInputsDiv.appendChild(upperBoundLabel);
+                }
+                levelInputsDiv.appendChild(document.createElement('br'));
+            }
+        }
+
+
         // Logic to plot points on the map
         function plotPoints(rows) {
             const latColumn = document.getElementById('dropdown1').value;
@@ -165,11 +233,12 @@
             }
         }
 
-        document.getElementById('generateLevels').addEventListener('click', function() {
-            const numLevels = parseInt(document.getElementById('numLevels').value);
+        function applyTemplate(template) {
+            const numLevels = template.length;
+            document.getElementById('numLevels').value = numLevels;
+
+            // Use your existing generateLevels logic here
             const levelInputsDiv = document.getElementById('levelInputs');
-            
-            // Clear existing inputs
             levelInputsDiv.innerHTML = '';
 
             for (let i = 1; i <= numLevels; i++) {
@@ -179,17 +248,31 @@
                 const colorInput = document.createElement('input');
                 colorInput.type = 'color';
                 colorInput.id = `level${i}Color`;
+                colorInput.value = template[i-1].color;
 
                 const valueInput = document.createElement('input');
                 valueInput.type = 'number';
                 valueInput.id = `level${i}Value`;
+                valueInput.value = template[i-1].value;
                 
                 levelInputsDiv.appendChild(label);
                 levelInputsDiv.appendChild(colorInput);
                 levelInputsDiv.appendChild(valueInput);
+                if (i === 1) {
+                    const lowerBoundLabel = document.createElement('span');
+                    lowerBoundLabel.textContent = " (<= this value)";
+                    levelInputsDiv.appendChild(lowerBoundLabel);
+                }
+
+                if (i === numLevels) {
+                    const upperBoundLabel = document.createElement('span');
+                    upperBoundLabel.textContent = " (>= this value)";
+                    levelInputsDiv.appendChild(upperBoundLabel);
+                }
                 levelInputsDiv.appendChild(document.createElement('br'));
             }
-        });
+        }
+
 
         document.getElementById('uploadForm').addEventListener('submit', function(event) {
             event.preventDefault();
@@ -217,46 +300,91 @@
                 });
 
                 // Enable the dropdowns and the "Plot" button
-                ['dropdown1', 'dropdown2', 'dropdown3', 'plotButton'].forEach(elementId => {
+                ['dropdown1', 'dropdown2', 'dropdown3'].forEach(elementId => {
                     document.getElementById(elementId).disabled = false;
                 });
 
                 // Initialize the map after processing the CSV
                 initializeMap();
+
             });
         });
-        // Event listener for the "Plot" button
-        document.getElementById('plotButton').addEventListener('click', function() {
-            // Check if the "Generate Levels" button has been clicked
-            const levelInputsDiv = document.getElementById('levelInputs');
-            const hasGeneratedLevels = levelInputsDiv.hasChildNodes();
 
-            let isRangeSet = false;
-
-            if (hasGeneratedLevels) {
-                const numLevels = parseInt(document.getElementById('numLevels').value);
-                for (let i = 1; i <= numLevels; i++) {
-                    if (document.getElementById(`level${i}Value`).value) {
-                        isRangeSet = true;
-                        break;
-                    }
-                }
-            }
-
-            // If no range has been set or "Generate Levels" hasn't been clicked, use a default color
-            if (!isRangeSet) {
-                markers.forEach(marker => {
-                    marker.setStyle({ fillColor: 'gray', color: 'gray' });
-                });
-                plotPoints(csvDataRows);  // Make sure to plot points even with default color
-            } else {
-                plotPoints(csvDataRows);
-            }
+        document.getElementById('dropdown3').addEventListener('change', function() {
+            // Code to execute when the value of dropdown3 changes
+            selectedColumn = this.value; // Get the currently selected value
+            generateAutomaticLevels(csvDataRows);
         });
 
         document.getElementById('applyColors').addEventListener('click', function() {
             plotPoints(csvDataRows);
         });
+
+        document.getElementById('numLevels').addEventListener('change', function() {
+            const selectedValue = this.value; // Get the currently selected value
+            generateAutomaticLevels(csvDataRows, selectedValue);
+        });
+
+        document.getElementById('saveTemplate').addEventListener('click', function() {
+            const numLevels = parseInt(document.getElementById('numLevels').value);
+            const template = [];
+
+            for (let i = 1; i <= numLevels; i++) {
+                const color = document.getElementById(`level${i}Color`).value;
+                const value = parseFloat(document.getElementById(`level${i}Value`).value);
+
+                template.push({color, value});
+            }
+
+            const blob = new Blob([JSON.stringify(template)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = 'template.json';
+            
+            document.body.appendChild(a);
+            a.click();
+
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('loadTemplate').addEventListener('click', function() {
+            document.getElementById('templateFile').click();
+        });
+
+        document.getElementById('templateFile').addEventListener('change', function() {
+            const file = this.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const template = JSON.parse(event.target.result);
+                    // Call a function to apply the loaded template
+                    applyTemplate(template);
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        document.getElementById('reverseColorsCheckbox').addEventListener('change', function() {
+            const numLevels = parseInt(document.getElementById('numLevels').value);
+
+            // Loop through each level and swap the colors from the beginning and end
+            for (let i = 1; i <= Math.ceil(numLevels / 2); i++) {
+                const correspondingLevel = numLevels - i + 1;
+
+                // Get current colors
+                const currentColor = document.getElementById(`level${i}Color`).value;
+                const correspondingColor = document.getElementById(`level${correspondingLevel}Color`).value;
+
+                // Swap colors
+                document.getElementById(`level${i}Color`).value = correspondingColor;
+                document.getElementById(`level${correspondingLevel}Color`).value = currentColor;
+            }
+        });
+
+
     </script>
 </body>
 </html>
